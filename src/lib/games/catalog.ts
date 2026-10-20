@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Brain,
+  Wifi,
   Drama,
   MessageCircleQuestion,
   Puzzle,
@@ -28,12 +29,24 @@ export const GAMES: GameEntry[] = [
     name: "Impostor",
     tagline: "Todo mundo sabe a palavra. Menos um.",
     description:
-      "Passa o celular de mão em mão, cada um vê a palavra secreta — menos o impostor. Discute, vota e descobre quem estava blefando.",
+      "Um aparelho só, passando de mão em mão: cada um vê a palavra secreta — menos o impostor. Discute, vota e descobre quem estava blefando.",
     icon: VenetianMask,
     players: "3 a 20 jogadores",
     minutes: "5 a 30 min",
     status: "ready",
     href: "/impostor",
+  },
+  {
+    slug: "impostor-online",
+    name: "Impostor online",
+    tagline: "Cada um no seu celular, mesma sala.",
+    description:
+      "Crie uma sala com código e QR Code, a galera entra pelo link e todo mundo acompanha a mesma partida — bom para jogar em chamada de vídeo.",
+    icon: Wifi,
+    players: "3 a 20 jogadores",
+    minutes: "5 a 30 min",
+    status: "ready",
+    href: "/online",
   },
   {
     slug: "quem-sou-eu",

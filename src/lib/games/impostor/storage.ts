@@ -4,11 +4,10 @@ import * as React from "react";
 
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { BUILTIN_PACKS } from "./packs";
-import { DEFAULT_CONFIG } from "./engine";
-import type { ConfigPreset, GameConfig, WordPack } from "./types";
+import { DEFAULT_CONFIG, DEFAULT_SCORING } from "./engine";
+import type { GameConfig, PackWord, WordPack } from "./types";
 
 const PACKS_KEY = "game-night:impostor:packs";
-const PRESETS_KEY = "game-night:impostor:presets";
 const LAST_CONFIG_KEY = "game-night:impostor:last-config";
 
 export function newId(prefix: string): string {
@@ -17,35 +16,66 @@ export function newId(prefix: string): string {
     .slice(2, 7)}`;
 }
 
+/** Aceita o formato antigo (lista de strings) e o novo (com dificuldade). */
+function normalizeWords(words: unknown): PackWord[] {
+  if (!Array.isArray(words)) return [];
+  const seen = new Set<string>();
+  const out: PackWord[] = [];
+  for (const raw of words) {
+    const word: PackWord | null =
+      typeof raw === "string"
+        ? { text: raw.trim(), level: "easy" }
+        : raw && typeof raw === "object" && typeof (raw as PackWord).text === "string"
+          ? {
+              text: String((raw as PackWord).text).trim(),
+              level: (raw as PackWord).level === "hard" ? "hard" : "easy",
+            }
+          : null;
+    if (!word || !word.text) continue;
+    const key = word.text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(word);
+  }
+  return out;
+}
+
+function normalizePack(pack: WordPack): WordPack {
+  return { ...pack, builtin: false, words: normalizeWords(pack.words) };
+}
+
 /** Pacotes criados pelo usuário + os nativos, numa lista só. */
 export function useWordPacks() {
-  const [custom, setCustom, ready] = useLocalStorage<WordPack[]>(PACKS_KEY, []);
-  const all = React.useMemo(
-    () => [...BUILTIN_PACKS, ...custom],
-    [custom],
+  const [stored, setStored, ready] = useLocalStorage<WordPack[]>(PACKS_KEY, []);
+
+  // Pacotes salvos antes da dificuldade existir vinham como lista de strings.
+  const custom = React.useMemo(
+    () => (Array.isArray(stored) ? stored.map(normalizePack) : []),
+    [stored],
   );
+  const all = React.useMemo(() => [...BUILTIN_PACKS, ...custom], [custom]);
 
   const createPack = React.useCallback(
     (pack: Omit<WordPack, "id" | "builtin">) => {
       const created: WordPack = { ...pack, id: newId("pack"), builtin: false };
-      setCustom((prev) => [...prev, created]);
+      setStored((prev) => [...prev, created]);
       return created;
     },
-    [setCustom],
+    [setStored],
   );
 
   const updatePack = React.useCallback(
     (id: string, patch: Partial<Omit<WordPack, "id" | "builtin">>) => {
-      setCustom((prev) =>
+      setStored((prev) =>
         prev.map((p) => (p.id === id ? { ...p, ...patch } : p)),
       );
     },
-    [setCustom],
+    [setStored],
   );
 
   const deletePack = React.useCallback(
-    (id: string) => setCustom((prev) => prev.filter((p) => p.id !== id)),
-    [setCustom],
+    (id: string) => setStored((prev) => prev.filter((p) => p.id !== id)),
+    [setStored],
   );
 
   const duplicatePack = React.useCallback(
@@ -55,33 +85,30 @@ export function useWordPacks() {
         name: `${source.name} (cópia)`,
         emoji: source.emoji,
         builtin: false,
-        words: [...source.words],
+        words: source.words.map((w) => ({ ...w })),
       };
-      setCustom((prev) => [...prev, copy]);
+      setStored((prev) => [...prev, copy]);
       return copy;
     },
-    [setCustom],
+    [setStored],
   );
 
   const importPacks = React.useCallback(
     (incoming: WordPack[]) => {
       const sane = incoming
-        .filter((p) => p && typeof p.name === "string" && Array.isArray(p.words))
+        .filter((p) => p && typeof p.name === "string")
         .map<WordPack>((p) => ({
           id: newId("pack"),
           name: String(p.name).slice(0, 60),
           emoji: typeof p.emoji === "string" && p.emoji ? p.emoji : "🗂️",
           builtin: false,
-          words: p.words
-            .filter((w): w is string => typeof w === "string")
-            .map((w) => w.trim())
-            .filter(Boolean),
+          words: normalizeWords(p.words),
         }))
         .filter((p) => p.words.length > 0);
-      setCustom((prev) => [...prev, ...sane]);
+      setStored((prev) => [...prev, ...sane]);
       return sane.length;
     },
-    [setCustom],
+    [setStored],
   );
 
   return {
@@ -96,36 +123,21 @@ export function useWordPacks() {
   };
 }
 
-/** Presets de configuração salvos pelo usuário. */
-export function useConfigPresets() {
-  const [presets, setPresets, ready] = useLocalStorage<ConfigPreset[]>(
-    PRESETS_KEY,
-    [],
-  );
-
-  const savePreset = React.useCallback(
-    (name: string, config: GameConfig) => {
-      const preset: ConfigPreset = {
-        id: newId("preset"),
-        name: name.trim() || "Sem nome",
-        config,
-        updatedAt: Date.now(),
-      };
-      setPresets((prev) => [preset, ...prev.filter((p) => p.name !== preset.name)]);
-      return preset;
-    },
-    [setPresets],
-  );
-
-  const deletePreset = React.useCallback(
-    (id: string) => setPresets((prev) => prev.filter((p) => p.id !== id)),
-    [setPresets],
-  );
-
-  return { presets, ready, savePreset, deletePreset };
+/** Completa configurações salvas por versões anteriores do app. */
+function normalizeConfig(config: GameConfig): GameConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    ...config,
+    scoring: { ...DEFAULT_SCORING, ...(config?.scoring ?? {}) },
+  };
 }
 
 /** Última configuração usada, pra não refazer tudo na próxima partida. */
 export function useLastConfig() {
-  return useLocalStorage<GameConfig>(LAST_CONFIG_KEY, DEFAULT_CONFIG);
+  const [stored, setStored, ready] = useLocalStorage<GameConfig>(
+    LAST_CONFIG_KEY,
+    DEFAULT_CONFIG,
+  );
+  const config = React.useMemo(() => normalizeConfig(stored), [stored]);
+  return [config, setStored, ready] as const;
 }

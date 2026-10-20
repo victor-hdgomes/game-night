@@ -19,7 +19,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { SCORING } from "@/lib/games/impostor/engine";
 import type { GameConfig, Round } from "@/lib/games/impostor/types";
 import { cn } from "@/lib/utils";
 
@@ -173,7 +172,7 @@ export function ResultStep({
               className="flex-1"
               onClick={() => setGuessed(true)}
             >
-              Acertou (+{SCORING.impostorGuess})
+              Acertou (+{config.scoring.impostorGuess})
             </Button>
             <Button
               variant={guessed === false ? "default" : "outline"}
@@ -194,18 +193,18 @@ export function ResultStep({
           {caught ? (
             <ul className="space-y-1">
               <li>
-                Inocentes: +{SCORING.crewCatch} cada um por pegar o impostor.
+                Inocentes: +{config.scoring.crewCatch} cada um por pegar o impostor.
               </li>
               <li>
                 Impostor:{" "}
                 {guessed
-                  ? `+${SCORING.impostorGuess} por acertar a palavra.`
+                  ? `+${config.scoring.impostorGuess} por acertar a palavra.`
                   : "0 ponto."}
               </li>
             </ul>
           ) : (
             <ul className="space-y-1">
-              <li>Impostor: +{SCORING.impostorEscape} por escapar.</li>
+              <li>Impostor: +{config.scoring.impostorEscape} por escapar.</li>
               <li>Inocentes: 0 ponto.</li>
             </ul>
           )}

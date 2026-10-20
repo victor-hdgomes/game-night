@@ -35,7 +35,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { BUILTIN_PACKS } from "@/lib/games/impostor/packs";
 import { useWordPacks } from "@/lib/games/impostor/storage";
-import type { WordPack } from "@/lib/games/impostor/types";
+import type { PackWord, WordPack } from "@/lib/games/impostor/types";
 
 type Draft = {
   id: string | null;
@@ -46,19 +46,42 @@ type Draft = {
 
 const EMPTY_DRAFT: Draft = { id: null, name: "", emoji: "🗂️", wordsText: "" };
 
-/** Uma palavra por linha; vírgulas também servem de separador. */
-function parseWords(text: string): string[] {
+/**
+ * Uma palavra por linha; vírgulas também separam. Linha terminada em "*"
+ * marca a palavra como difícil.
+ */
+function parseWords(text: string): PackWord[] {
   const seen = new Set<string>();
-  return text
-    .split(/[\n,]/)
-    .map((w) => w.trim())
-    .filter(Boolean)
-    .filter((w) => {
-      const key = w.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  const out: PackWord[] = [];
+  for (const raw of text.split(/[\n,]/)) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const hard = trimmed.endsWith("*");
+    const word = (hard ? trimmed.slice(0, -1) : trimmed).trim();
+    if (!word) continue;
+    const key = word.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ text: word, level: hard ? "hard" : "easy" });
+  }
+  return out;
+}
+
+function toTextarea(words: PackWord[]): string {
+  return words
+    .map((w) => (w.level === "hard" ? `${w.text} *` : w.text))
+    .join("\n");
+}
+
+function preview(words: PackWord[], count: number): string {
+  return words
+    .slice(0, count)
+    .map((w) => w.text)
+    .join(", ");
+}
+
+function countHard(words: PackWord[]): number {
+  return words.filter((w) => w.level === "hard").length;
 }
 
 export function PackManager() {
@@ -82,7 +105,7 @@ export function PackManager() {
       id: pack.id,
       name: pack.name,
       emoji: pack.emoji,
-      wordsText: pack.words.join("\n"),
+      wordsText: toTextarea(pack.words),
     });
 
   const saveDraft = () => {
@@ -200,7 +223,8 @@ export function PackManager() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{pack.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {pack.words.length} palavras · {pack.words.slice(0, 3).join(", ")}
+                  {pack.words.length} palavras ({countHard(pack.words)}{" "}
+                  difíceis) · {preview(pack.words, 3)}
                   {pack.words.length > 3 ? "…" : ""}
                 </p>
               </div>
@@ -249,7 +273,7 @@ export function PackManager() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{pack.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {pack.words.slice(0, 4).join(", ")}…
+                  {preview(pack.words, 4)}…
                 </p>
               </div>
               <Badge variant="secondary" className="shrink-0 tabular-nums">
@@ -281,7 +305,8 @@ export function PackManager() {
               {draft?.id ? "Editar pacote" : "Novo pacote"}
             </DialogTitle>
             <DialogDescription>
-              Uma palavra por linha. Vírgula também separa.
+              Uma palavra por linha. Termine com <code>*</code> para marcar
+              a palavra como difícil.
             </DialogDescription>
           </DialogHeader>
           {draft ? (
@@ -318,14 +343,15 @@ export function PackManager() {
                   id="pack-words"
                   value={draft.wordsText}
                   rows={10}
-                  placeholder={"Praia\nAeroporto\nHospital"}
+                  placeholder={"Praia\nAeroporto\nSubmarino *"}
                   onChange={(e) =>
                     setDraft({ ...draft, wordsText: e.target.value })
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  {parseWords(draft.wordsText).length} palavras válidas
-                  (duplicadas são ignoradas).
+                  {parseWords(draft.wordsText).length} palavras válidas,{" "}
+                  {countHard(parseWords(draft.wordsText))} difíceis. Duplicadas
+                  são ignoradas.
                 </p>
               </div>
             </div>

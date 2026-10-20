@@ -3,14 +3,29 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Dices, Home, Moon, Sun } from "lucide-react";
+import {
+  Dices,
+  Home,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Sun,
+} from "lucide-react";
 
 import { useTheme } from "@/components/providers/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useLocalStorage } from "@/hooks/use-local-storage";
 import { cn } from "@/lib/utils";
 
 const NAV = [{ href: "/", icon: Home, label: "Início" }] as const;
+
+const COLLAPSED_KEY = "game-night:sidebar-collapsed";
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -19,10 +34,19 @@ function isActive(pathname: string, href: string) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  // A escolha vale para as próximas visitas, não só para esta tela.
+  const [collapsed, setCollapsed] = useLocalStorage<boolean>(
+    COLLAPSED_KEY,
+    false,
+  );
 
   return (
     <div className="flex min-h-screen w-full flex-col md:flex-row">
-      <Sidebar pathname={pathname} />
+      <Sidebar
+        pathname={pathname}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((prev) => !prev)}
+      />
       <main className="flex-1 pb-20 md:pb-0">
         <MobileTopBar />
         <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8 md:py-8">
@@ -53,13 +77,27 @@ function ThemeToggle() {
   );
 }
 
-function Brand({ className }: { className?: string }) {
+function Brand({
+  className,
+  compact,
+}: {
+  className?: string;
+  compact?: boolean;
+}) {
   return (
-    <div className={cn("flex items-center gap-2", className)}>
-      <Dices className="h-5 w-5 text-primary" />
-      <span className="text-sm font-semibold tracking-tight">
-        Sala de Jogos
-      </span>
+    <div
+      className={cn(
+        "flex items-center gap-2",
+        compact && "justify-center",
+        className,
+      )}
+    >
+      <Dices className="h-5 w-5 shrink-0 text-primary" />
+      {compact ? null : (
+        <span className="truncate text-sm font-semibold tracking-tight">
+          Sala de Jogos
+        </span>
+      )}
     </div>
   );
 }
@@ -73,35 +111,97 @@ function MobileTopBar() {
   );
 }
 
-function Sidebar({ pathname }: { pathname: string }) {
+function Sidebar({
+  pathname,
+  collapsed,
+  onToggle,
+}: {
+  pathname: string;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-sidebar px-3 py-4 md:flex">
-      <Brand className="px-2 pb-2" />
+    <aside
+      data-collapsed={collapsed}
+      className={cn(
+        "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border bg-sidebar py-4 transition-[width] duration-200 md:flex",
+        collapsed ? "w-16 px-2" : "w-60 px-3",
+      )}
+    >
+      <div
+        className={cn(
+          "flex items-center gap-1",
+          collapsed ? "flex-col" : "justify-between",
+        )}
+      >
+        <Brand className={cn(collapsed ? "py-1" : "px-2")} compact={collapsed} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggle}
+              aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+              aria-expanded={!collapsed}
+            >
+              {collapsed ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            {collapsed ? "Expandir menu" : "Recolher menu"}
+          </TooltipContent>
+        </Tooltip>
+      </div>
+
       <Separator className="my-2" />
+
       <nav className="flex flex-1 flex-col gap-1">
         {NAV.map((item) => {
           const Icon = item.icon;
           const active = isActive(pathname, item.href);
-          return (
+          const link = (
             <Link
               key={item.href}
               href={item.href}
+              aria-label={item.label}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                "flex items-center gap-3 rounded-md py-2 text-sm transition-colors",
+                collapsed ? "justify-center px-0" : "px-3",
                 active
                   ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                   : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
               )}
             >
               <Icon className="h-4 w-4 shrink-0" />
-              {item.label}
+              {collapsed ? null : item.label}
             </Link>
+          );
+
+          if (!collapsed) return link;
+          return (
+            <Tooltip key={item.href}>
+              <TooltipTrigger asChild>{link}</TooltipTrigger>
+              <TooltipContent side="right">{item.label}</TooltipContent>
+            </Tooltip>
           );
         })}
       </nav>
+
       <Separator className="my-2" />
-      <div className="flex items-center justify-between px-1">
-        <span className="text-xs text-muted-foreground">Tema</span>
+
+      <div
+        className={cn(
+          "flex items-center",
+          collapsed ? "justify-center" : "justify-between px-1",
+        )}
+      >
+        {collapsed ? null : (
+          <span className="text-xs text-muted-foreground">Tema</span>
+        )}
         <ThemeToggle />
       </div>
     </aside>

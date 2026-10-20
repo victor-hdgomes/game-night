@@ -8,6 +8,7 @@ import {
   Plus,
   Shuffle,
   Trash2,
+  Trophy,
   UserPlus,
   X,
 } from "lucide-react";
@@ -36,14 +37,29 @@ import {
   MIN_PLAYERS,
   maxImpostors,
   validateConfig,
+  wordsForDifficulty,
 } from "@/lib/games/impostor/engine";
 import type {
+  Difficulty,
+  DiscussionMode,
   GameConfig,
   ImpostorHint,
   TurnOrder,
   WordPack,
 } from "@/lib/games/impostor/types";
 import { cn } from "@/lib/utils";
+
+const DIFFICULTY_LABEL: Record<Difficulty, string> = {
+  all: "Todas as palavras",
+  easy: "Só as fáceis",
+  hard: "Só as difíceis",
+};
+
+const DISCUSSION_LABEL: Record<DiscussionMode, string> = {
+  hints: "Rodada de dicas (cada um fala uma palavra)",
+  questions: "Rodada de perguntas (X pergunta para Y)",
+  free: "Conversa livre",
+};
 
 const HINT_LABEL: Record<ImpostorHint, string> = {
   none: "Nada (modo clássico)",
@@ -105,7 +121,10 @@ export function SetupForm({
 
   const selectedWords = packs
     .filter((p) => config.packIds.includes(p.id))
-    .reduce((sum, p) => sum + p.words.length, 0);
+    .reduce(
+      (sum, p) => sum + wordsForDifficulty(p, config.difficulty).length,
+      0,
+    );
 
   return (
     <div className="space-y-4">
@@ -221,11 +240,37 @@ export function SetupForm({
                       on ? "opacity-80" : "text-muted-foreground",
                     )}
                   >
-                    {pack.words.length}
+                    {wordsForDifficulty(pack, config.difficulty).length}
                   </span>
                 </button>
               );
             })}
+          </div>
+          <div className="border-t border-border pt-1">
+            <OptionRow
+              label="Dificuldade das palavras"
+              hint="As difíceis são as menos óbvias de cada pacote."
+              stack
+              control={
+                <Select
+                  value={config.difficulty}
+                  onValueChange={(v) => patch({ difficulty: v as Difficulty })}
+                >
+                  <SelectTrigger className="w-full sm:w-64">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(DIFFICULTY_LABEL) as Difficulty[]).map(
+                      (key) => (
+                        <SelectItem key={key} value={key}>
+                          {DIFFICULTY_LABEL[key]}
+                        </SelectItem>
+                      ),
+                    )}
+                  </SelectContent>
+                </Select>
+              }
+            />
           </div>
         </CardContent>
       </Card>
@@ -318,15 +363,29 @@ export function SetupForm({
             }
           />
           <OptionRow
-            label="Rodada de dicas"
-            hint="Cada um fala uma palavra sobre o tema antes da discussão solta."
-            htmlFor="hint-round"
+            label="Como a mesa conversa"
+            hint="Na rodada de perguntas o app sorteia quem pergunta, e quem responde pergunta em seguida."
+            stack
             control={
-              <Switch
-                id="hint-round"
-                checked={config.hintRound}
-                onCheckedChange={(hintRound) => patch({ hintRound })}
-              />
+              <Select
+                value={config.discussionMode}
+                onValueChange={(v) =>
+                  patch({ discussionMode: v as DiscussionMode })
+                }
+              >
+                <SelectTrigger className="w-full sm:w-72">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(DISCUSSION_LABEL) as DiscussionMode[]).map(
+                    (key) => (
+                      <SelectItem key={key} value={key}>
+                        {DISCUSSION_LABEL[key]}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
             }
           />
           <OptionRow
@@ -362,6 +421,19 @@ export function SetupForm({
             }
           />
           <OptionRow
+            label="Empate vira segundo turno"
+            hint="Desligado, empate solta o impostor na hora."
+            htmlFor="runoff"
+            control={
+              <Switch
+                id="runoff"
+                checked={config.runoffOnTie}
+                disabled={!config.votingEnabled}
+                onCheckedChange={(runoffOnTie) => patch({ runoffOnTie })}
+              />
+            }
+          />
+          <OptionRow
             label="Chance de redenção"
             hint="Impostor pego pode adivinhar a palavra e roubar pontos."
             htmlFor="guess"
@@ -370,6 +442,62 @@ export function SetupForm({
                 id="guess"
                 checked={config.impostorGuess}
                 onCheckedChange={(impostorGuess) => patch({ impostorGuess })}
+              />
+            }
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="gap-2 py-5">
+        <CardHeader className="px-5">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Trophy className="h-4 w-4 text-primary" />
+            Pontuação
+          </CardTitle>
+          <CardDescription>
+            Quanto vale cada desfecho de rodada.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="divide-y divide-border px-5">
+          <OptionRow
+            label="Inocente que pega o impostor"
+            control={
+              <Stepper
+                value={config.scoring.crewCatch}
+                min={0}
+                max={10}
+                onChange={(crewCatch) =>
+                  patch({ scoring: { ...config.scoring, crewCatch } })
+                }
+                suffix="pt"
+              />
+            }
+          />
+          <OptionRow
+            label="Impostor que escapa"
+            control={
+              <Stepper
+                value={config.scoring.impostorEscape}
+                min={0}
+                max={10}
+                onChange={(impostorEscape) =>
+                  patch({ scoring: { ...config.scoring, impostorEscape } })
+                }
+                suffix="pt"
+              />
+            }
+          />
+          <OptionRow
+            label="Impostor pego que acerta a palavra"
+            control={
+              <Stepper
+                value={config.scoring.impostorGuess}
+                min={0}
+                max={10}
+                onChange={(impostorGuess) =>
+                  patch({ scoring: { ...config.scoring, impostorGuess } })
+                }
+                suffix="pt"
               />
             }
           />

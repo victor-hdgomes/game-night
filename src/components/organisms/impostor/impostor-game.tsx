@@ -101,6 +101,7 @@ export function ImpostorGame() {
       config.players.length,
       accusedIndex,
       guessed,
+      config.scoring,
     );
 
     setMatch((prev) => {
