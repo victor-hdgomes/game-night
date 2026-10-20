@@ -7,51 +7,17 @@ import {
   wordsForDifficulty,
 } from "@/lib/games/impostor/engine";
 import { BUILTIN_PACKS } from "@/lib/games/impostor/packs";
-import type {
-  GameConfig,
-  RoundOutcome,
-  WordPack,
-} from "@/lib/games/impostor/types";
+import type { GameConfig, RoundOutcome } from "@/lib/games/impostor/types";
 import {
   ROOM_TTL_MS,
   type PlayerView,
   type PublicRound,
   type RoomAction,
   type RoomPlayer,
-  type RoomState,
 } from "@/lib/games/impostor/online/types";
 
-/**
- * Salas ficam na memória do servidor e morrem em 24h — é jogo de uma noite,
- * não vale carregar banco para isso. Trocar por Redis/Postgres depois é só
- * reimplementar `rooms` com a mesma interface.
- */
-type Secret = {
-  word: string;
-  decoy: string | null;
-  impostorIds: string[];
-  packId: string;
-};
-
-type Room = {
-  state: RoomState;
-  packs: WordPack[];
-  secret: Secret | null;
-  usedWords: string[];
-  /** voterId -> alvo (null = voto em branco). */
-  ballots: Record<string, string | null>;
-  listeners: Set<() => void>;
-};
-
-type Store = {
-  rooms: Map<string, Room>;
-};
-
-const globalForRooms = globalThis as unknown as { __impostorRooms?: Store };
-const store: Store =
-  globalForRooms.__impostorRooms ?? (globalForRooms.__impostorRooms = {
-    rooms: new Map(),
-  });
+import { roomStorage } from "./room-storage";
+import type { Room, RoomSecret } from "./room-types";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sem I, O, 0, 1
 const CODE_LENGTH = 5;
@@ -81,33 +47,30 @@ function pick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
-/** Remove salas vencidas. Roda a cada requisição, sem agendador. */
-export function purgeExpired(now = Date.now()): number {
-  let removed = 0;
-  for (const [code, room] of store.rooms) {
-    if (room.state.expiresAt <= now) {
-      for (const notify of room.listeners) notify();
-      room.listeners.clear();
-      store.rooms.delete(code);
-      removed++;
-    }
-  }
-  return removed;
-}
-
-function touch(room: Room) {
-  room.state.version++;
-  for (const notify of room.listeners) notify();
-}
-
 function emptyVotes() {
   return { counts: {}, voted: [], candidates: null, runoff: false };
 }
 
-export function createRoom(hostName: string, config?: GameConfig) {
-  purgeExpired();
+/** Grava a sala e acorda os streams (quando o storage sabe avisar). */
+async function commit(room: Room) {
+  room.state.version++;
+  await roomStorage.save(room);
+  roomStorage.notify(room.state.code);
+}
+
+export const storageKind = roomStorage.kind;
+
+export function subscribeRoom(code: string, notify: () => void) {
+  return roomStorage.subscribe(code.toUpperCase(), notify);
+}
+
+export async function loadRoom(code: string) {
+  return roomStorage.load(code.toUpperCase());
+}
+
+export async function createRoom(hostName: string, config?: GameConfig) {
   let code = randomCode();
-  while (store.rooms.has(code)) code = randomCode();
+  while (await roomStorage.load(code)) code = randomCode();
 
   const host: RoomPlayer = {
     id: randomId(),
@@ -137,16 +100,14 @@ export function createRoom(hostName: string, config?: GameConfig) {
     secret: null,
     usedWords: [],
     ballots: {},
-    listeners: new Set(),
   };
 
-  store.rooms.set(code, room);
+  await roomStorage.save(room);
   return { code, playerId: host.id };
 }
 
-export function joinRoom(code: string, name: string) {
-  purgeExpired();
-  const room = store.rooms.get(code.toUpperCase());
+export async function joinRoom(code: string, name: string) {
+  const room = await roomStorage.load(code.toUpperCase());
   if (!room) return { error: "Sala não encontrada ou expirada." } as const;
   if (room.state.phase !== "setup") {
     return { error: "A partida já começou nessa sala." } as const;
@@ -172,29 +133,14 @@ export function joinRoom(code: string, name: string) {
     lastSeen: Date.now(),
   };
   room.state.players.push(player);
-  touch(room);
+  await commit(room);
   return { playerId: player.id } as const;
-}
-
-export function getRoom(code: string): Room | undefined {
-  purgeExpired();
-  return store.rooms.get(code.toUpperCase());
-}
-
-export function subscribe(code: string, notify: () => void): () => void {
-  const room = store.rooms.get(code.toUpperCase());
-  if (!room) return () => {};
-  room.listeners.add(notify);
-  return () => {
-    room.listeners.delete(notify);
-  };
 }
 
 /** Monta a visão de um jogador: estado público + a carta só dele. */
 export function viewFor(room: Room, playerId: string): PlayerView | null {
   const me = room.state.players.find((p) => p.id === playerId);
   if (!me) return null;
-  me.lastSeen = Date.now();
 
   let card: PlayerView["card"] = null;
   const secret = room.secret;
@@ -243,7 +189,14 @@ export function viewFor(room: Room, playerId: string): PlayerView | null {
   };
 }
 
-function drawRound(room: Room): { round: PublicRound; secret: Secret } | null {
+/** Visão de um jogador a partir do código, já lendo do storage. */
+export async function getView(code: string, playerId: string) {
+  const room = await roomStorage.load(code.toUpperCase());
+  if (!room) return null;
+  return viewFor(room, playerId);
+}
+
+function drawRound(room: Room): { round: PublicRound; secret: RoomSecret } | null {
   const { config, players } = room.state;
   const pool = room.packs.filter(
     (p) =>
@@ -304,10 +257,9 @@ function tally(room: Room) {
     if (!target) continue;
     counts[target] = (counts[target] ?? 0) + 1;
   }
-  const voted = Object.keys(room.ballots);
   room.state.votes = {
     counts,
-    voted,
+    voted: Object.keys(room.ballots),
     candidates: room.state.votes.candidates,
     runoff: room.state.votes.runoff,
   };
@@ -325,14 +277,13 @@ function closeVote(room: Room) {
   const counts = tally(room);
   const top = leaders(counts);
 
-  if (top.length > 1 && room.state.config.runoffOnTie && !room.state.votes.runoff) {
+  if (
+    top.length > 1 &&
+    room.state.config.runoffOnTie &&
+    !room.state.votes.runoff
+  ) {
     room.ballots = {};
-    room.state.votes = {
-      counts: {},
-      voted: [],
-      candidates: top,
-      runoff: true,
-    };
+    room.state.votes = { counts: {}, voted: [], candidates: top, runoff: true };
     return;
   }
 
@@ -352,7 +303,6 @@ function applyScore(room: Room) {
   if (!revealed) return;
   const { scoring } = room.state.config;
   const points: Record<number, number> = {};
-  const scores = room.state.scores;
 
   room.state.players.forEach((player, index) => {
     const isImpostor = revealed.impostorIds.includes(player.id);
@@ -365,7 +315,7 @@ function applyScore(room: Room) {
       : revealed.caught
         ? scoring.crewCatch
         : 0;
-    scores[player.id] = (scores[player.id] ?? 0) + gained;
+    room.state.scores[player.id] = (room.state.scores[player.id] ?? 0) + gained;
     points[index] = gained;
   });
 
@@ -388,19 +338,18 @@ function applyScore(room: Room) {
 }
 
 /** Aplica uma ação. Só o anfitrião controla as fases. */
-export function applyAction(
+export async function applyAction(
   code: string,
   playerId: string,
   action: RoomAction,
-): { error?: string; view?: PlayerView } {
-  const room = getRoom(code);
+): Promise<{ error?: string; view?: PlayerView }> {
+  const room = await roomStorage.load(code.toUpperCase());
   if (!room) return { error: "Sala não encontrada ou expirada." };
   const me = room.state.players.find((p) => p.id === playerId);
   if (!me) return { error: "Você não está nessa sala." };
   me.lastSeen = Date.now();
 
-  const hostOnly = () =>
-    me.isHost ? null : "Só o anfitrião pode fazer isso.";
+  const hostOnly = () => (me.isHost ? null : "Só o anfitrião pode fazer isso.");
 
   switch (action.type) {
     case "ping":
@@ -409,15 +358,12 @@ export function applyAction(
     case "config": {
       const denied = hostOnly();
       if (denied) return { error: denied };
-      room.state.config = {
-        ...action.config,
-        players: [],
-      };
+      room.state.config = { ...action.config, players: [] };
       if (action.packs?.length) {
         const custom = action.packs.filter((p) => !p.builtin);
         room.packs = [...BUILTIN_PACKS, ...custom];
       }
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -427,22 +373,21 @@ export function applyAction(
       if (denied) return { error: denied };
       if (action.type === "next") applyScore(room);
       const total = room.state.config.totalRounds;
-      const played = room.state.outcomes.length;
-      if (action.type === "next" && total > 0 && played >= total) {
+      if (action.type === "next" && total > 0 && room.state.outcomes.length >= total) {
         room.state.phase = "gameover";
-        touch(room);
+        await commit(room);
         break;
       }
       const error = startRound(room);
       if (error) return { error };
-      touch(room);
+      await commit(room);
       break;
     }
 
     case "reveal": {
       if (!room.state.revealed.includes(playerId)) {
         room.state.revealed.push(playerId);
-        touch(room);
+        await commit(room);
       }
       break;
     }
@@ -451,7 +396,7 @@ export function applyAction(
       const denied = hostOnly();
       if (denied) return { error: denied };
       room.state.phase = "discussion";
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -461,7 +406,7 @@ export function applyAction(
       room.ballots = {};
       room.state.votes = emptyVotes();
       room.state.phase = "voting";
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -470,11 +415,7 @@ export function applyAction(
         return { error: "A votação não está aberta." };
       }
       const candidates = room.state.votes.candidates;
-      if (
-        action.targetId &&
-        candidates &&
-        !candidates.includes(action.targetId)
-      ) {
+      if (action.targetId && candidates && !candidates.includes(action.targetId)) {
         return { error: "Esse jogador não está no segundo turno." };
       }
       room.ballots[playerId] = action.targetId;
@@ -483,7 +424,7 @@ export function applyAction(
       if (Object.keys(room.ballots).length >= room.state.players.length) {
         closeVote(room);
       }
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -491,7 +432,7 @@ export function applyAction(
       const denied = hostOnly();
       if (denied) return { error: denied };
       closeVote(room);
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -499,7 +440,7 @@ export function applyAction(
       const denied = hostOnly();
       if (denied) return { error: denied };
       room.state.impostorGuessedWord = action.guessed;
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -508,7 +449,7 @@ export function applyAction(
       if (denied) return { error: denied };
       if (room.state.phase === "result") applyScore(room);
       room.state.phase = "gameover";
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -521,7 +462,7 @@ export function applyAction(
       room.state.round = null;
       room.state.phase = "setup";
       room.secret = null;
-      touch(room);
+      await commit(room);
       break;
     }
 
@@ -531,18 +472,18 @@ export function applyAction(
       room.state.players = room.state.players.filter(
         (p) => p.id !== action.playerId || p.isHost,
       );
-      touch(room);
+      await commit(room);
       break;
     }
 
     case "leave": {
       room.state.players = room.state.players.filter((p) => p.id !== playerId);
       if (room.state.players.length === 0) {
-        store.rooms.delete(room.state.code);
+        await roomStorage.remove(room.state.code);
         return {};
       }
       if (me.isHost) room.state.players[0].isHost = true;
-      touch(room);
+      await commit(room);
       return {};
     }
   }

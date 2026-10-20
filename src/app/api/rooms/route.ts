@@ -16,6 +16,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Informe seu nome." }, { status: 400 });
   }
 
-  const { code, playerId } = createRoom(hostName, body?.config);
+  const { code, playerId } = await createRoom(hostName, body?.config);
   return NextResponse.json({ code, playerId });
 }

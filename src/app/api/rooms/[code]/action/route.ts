@@ -19,7 +19,7 @@ export async function POST(
     return NextResponse.json({ error: "Requisição inválida." }, { status: 400 });
   }
 
-  const result = applyAction(code, body.playerId, body.action);
+  const result = await applyAction(code, body.playerId, body.action);
   if (result.error) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }

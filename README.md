@@ -79,17 +79,34 @@ requisição.
 
 ### Como está implementado
 
-- Estado das salas: memória do processo (`src/lib/server/room-store.ts`),
-  com TTL de 24h. Sem banco de dados.
+- Regras e estado da sala: `src/lib/server/room-store.ts`.
+- Onde a sala é guardada: `src/lib/server/room-storage.ts`, com duas
+  implementações escolhidas pelas variáveis de ambiente:
+  - **memória** (padrão, sem configuração) — morre com o processo e só serve
+    para uma instância;
+  - **Upstash Redis** — uma chave `game-night:room:<CODIGO>` por sala, com
+    TTL nativo de 24h; é o modo necessário em serverless.
 - Transporte: `POST /api/rooms`, `/api/rooms/[code]/join`,
   `/api/rooms/[code]/action` e um stream SSE em `/api/rooms/[code]/stream`.
+  Em memória o stream é avisado na hora; com Redis ele relê a sala a cada 2s
+  e só empurra quando o número de versão muda.
 - O servidor manda para cada celular só a carta daquele jogador: a palavra e
   a lista de impostores nunca saem do servidor antes da revelação.
 
-> **Deploy:** por ficar em memória, o modo online precisa de **uma instância
-> só** (um servidor Node rodando `npm start`). Em serverless com várias
-> instâncias (ex: Vercel), trocar `room-store.ts` por Redis/Postgres — a
-> interface já está isolada nesse arquivo.
+### Variáveis de ambiente
+
+| Variável | Para quê |
+| --- | --- |
+| `UPSTASH_REDIS_REST_URL` | endpoint REST da database Upstash |
+| `UPSTASH_REDIS_REST_TOKEN` | token REST da mesma database |
+
+Sem as duas, o app cai no modo memória (nenhuma configuração é obrigatória em
+desenvolvimento). A integração Upstash da Vercel cria `KV_REST_API_URL` e
+`KV_REST_API_TOKEN`, que o app também aceita. Veja `.env.example`.
+
+**Na Vercel:** crie a database em [upstash.com](https://upstash.com) (ou pelo
+marketplace da Vercel), copie as duas variáveis em *Settings → Environment
+Variables* para Production/Preview/Development e redeploy.
 
 ## Pacotes de palavras
 
@@ -121,7 +138,8 @@ src/components/templates     AppShell (sidebar + bottom nav)
 src/lib/games/catalog.ts     catálogo da home
 src/lib/games/impostor       tipos, engine, pacotes e storage do jogo
 src/lib/games/impostor/online  tipos e cliente (SSE) do modo online
-src/lib/server/room-store.ts   salas online em memória, com TTL de 24h
+src/lib/server/room-store.ts   regras da sala online
+src/lib/server/room-storage.ts memória ou Upstash Redis (TTL de 24h)
 src/app/api/rooms              rotas da sala online
 ```
 

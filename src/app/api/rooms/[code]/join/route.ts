@@ -13,7 +13,7 @@ export async function POST(
     name?: string;
   } | null;
 
-  const result = joinRoom(code, body?.name ?? "");
+  const result = await joinRoom(code, body?.name ?? "");
   if ("error" in result) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
